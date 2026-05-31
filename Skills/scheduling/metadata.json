@@ -1,0 +1,6 @@
+{
+  "name": "scheduling",
+  "description": "Calendar coordination, reminders, time planning, and schedule management.",
+  "keywords": ["schedule", "calendar", "reminder", "time", "planning"],
+  "priority": 1
+}

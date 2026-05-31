@@ -1,0 +1,10 @@
+{
+  "memory_window": 16,
+  "temperature": 0.1,
+  "max_tokens": 350,
+  "voice": {
+    "name": "vision",
+    "enabled": true
+  }
+}
+

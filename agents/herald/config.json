@@ -1,0 +1,10 @@
+{
+  "memory_window": 20,
+  "temperature": 0.25,
+  "max_tokens": 500,
+  "voice": {
+    "name": "herald",
+    "enabled": true
+  }
+}
+

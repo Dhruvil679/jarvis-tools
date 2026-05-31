@@ -1,0 +1,2 @@
+This file is a placeholder for a startup sound (WAV or MP3).
+Place your startup audio here and update `main.py` or UI code to play it.

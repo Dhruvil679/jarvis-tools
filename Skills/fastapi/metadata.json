@@ -1,0 +1,6 @@
+{
+  "name": "fastapi",
+  "description": "FastAPI route design, request validation, backend API endpoints, and service integration.",
+  "keywords": ["fastapi", "api", "routes", "validation", "backend", "http"],
+  "priority": 1
+}

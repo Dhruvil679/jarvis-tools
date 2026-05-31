@@ -1,0 +1,9 @@
+{
+  "memory_window": 24,
+  "temperature": 0.35,
+  "max_tokens": 650,
+  "voice": {
+    "name": "gecko",
+    "enabled": true
+  }
+}

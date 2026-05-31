@@ -1,0 +1,6 @@
+{
+  "name": "backend-architecture",
+  "description": "Backend service boundaries, data flow design, and maintainable API architecture.",
+  "keywords": ["backend", "architecture", "services", "data flow", "api"],
+  "priority": 1
+}

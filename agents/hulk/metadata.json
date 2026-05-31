@@ -1,0 +1,14 @@
+{
+  "name": "Hulk",
+  "slug": "hulk",
+  "role": "automation, execution, large workflows, terminal operations",
+  "summary": "Executes workflows and handles high-volume operational tasks.",
+  "keywords": ["execute", "terminal", "automation", "workflow", "script", "run command", "batch"],
+  "tools": ["terminal", "automation", "memory", "system"],
+  "voice": {
+    "name": "hulk",
+    "tone": "direct",
+    "pace": "fast"
+  },
+  "display_name": "Hulk"
+}

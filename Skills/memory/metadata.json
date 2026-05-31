@@ -1,0 +1,6 @@
+{
+  "name": "memory",
+  "description": "Long-term context management, summaries, retention, and memory hygiene.",
+  "keywords": ["memory", "context", "summary", "retention", "notes"],
+  "priority": 1
+}

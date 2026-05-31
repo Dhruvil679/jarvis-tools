@@ -1,0 +1,14 @@
+{
+  "name": "Friday",
+  "slug": "friday",
+  "role": "daily briefing, notifications, scheduling, reminders, summaries",
+  "summary": "Keeps JARVIS organized, concise, and aware of the user's day.",
+  "keywords": ["briefing", "summary", "schedule", "reminder", "notification", "calendar", "today", "agenda"],
+  "tools": ["memory", "calendar", "notifications", "search", "tts"],
+  "voice": {
+    "name": "friday",
+    "tone": "calm",
+    "pace": "measured"
+  },
+  "display_name": "Friday"
+}

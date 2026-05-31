@@ -1,0 +1,10 @@
+{
+  "memory_window": 28,
+  "temperature": 0.1,
+  "max_tokens": 500,
+  "voice": {
+    "name": "hulk",
+    "enabled": true
+  }
+}
+

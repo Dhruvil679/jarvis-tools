@@ -1,0 +1,12 @@
+speechrecognition
+pyaudio
+pyttsx3
+requests
+rich
+psutil
+colorama
+pydub
+six
+fastapi
+uvicorn
+pydantic

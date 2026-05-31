@@ -1,0 +1,10 @@
+{
+  "memory_window": 32,
+  "temperature": 0.15,
+  "max_tokens": 650,
+  "voice": {
+    "name": "oracle",
+    "enabled": true
+  }
+}
+

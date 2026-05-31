@@ -1,0 +1,10 @@
+{
+  "memory_window": 20,
+  "temperature": 0.1,
+  "max_tokens": 550,
+  "voice": {
+    "name": "spectre",
+    "enabled": true
+  }
+}
+

@@ -1,0 +1,27 @@
+{
+  "single": {
+    "friday": ["briefing", "summary", "today", "schedule", "calendar", "reminder", "notification"],
+    "oracle": ["research", "competitor", "analysis", "compare", "investigate", "trend", "intelligence"],
+    "vision": ["image", "screenshot", "see", "observe", "camera", "visual", "monitor"],
+    "ultron": ["code", "build", "react", "python", "debug", "architecture", "software", "api"],
+    "hulk": ["execute", "terminal", "automation", "workflow", "script", "run command", "batch"],
+    "spectre": ["legal", "contract", "compliance", "risk", "policy", "privacy", "review"],
+    "herald": ["email", "announcement", "social", "press", "message", "draft", "communication"],
+    "veronica": ["customer", "support", "crm", "operations", "client", "ticket", "service"],
+    "gecko": ["growth", "marketing", "seo", "content", "brand", "campaign", "traffic"]
+  },
+  "multi": [
+    {
+      "keywords": ["build", "launch", "startup", "saas", "platform", "product", "go to market"],
+      "agents": ["oracle", "ultron", "gecko", "friday"]
+    },
+    {
+      "keywords": ["research", "compare", "analyze", "strategy"],
+      "agents": ["oracle", "gecko", "friday"]
+    },
+    {
+      "keywords": ["dashboard", "system", "app", "workflow", "automation"],
+      "agents": ["ultron", "hulk", "friday"]
+    }
+  ]
+}
