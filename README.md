@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # JARVIS Operating System
 
 JARVIS now runs as a multi-agent operating system with specialist agents, per-agent memory, an orchestrator, a FastAPI backend, and a React dashboard scaffold.
@@ -42,3 +43,6 @@ npm run dev
 - The API and dashboard are scaffolded for local development and can be extended with real tool execution and richer UI state.
 - Windows voice input still depends on the local audio stack and PyAudio availability.
 
+=======
+# jarvis-tools
+>>>>>>> 0d70fa5dbba081014f6c9cd608c3d5e5162d0385
