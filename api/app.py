@@ -10,10 +10,13 @@ from pydantic import BaseModel, Field
 from config.config import config
 from core.agent_manager import AgentManager
 from core.agent_router import AgentRouter
+from core.collaboration_engine import CollaborationEngine
+from core.artifact_manager import ArtifactManager, ToolAuditStore
 from core.logger import get_logger
 from core.ollama_client import OllamaClient
 from core.orchestrator import JarvisOrchestrator
 from core.skill_engine import SkillEngine
+from core.trace_manager import TraceManager
 from core.tool_executor import ToolExecutor
 
 
@@ -28,20 +31,32 @@ class ChatRequest(BaseModel):
 
 def create_runtime() -> Dict[str, Any]:
     skill_engine = SkillEngine()
+    trace_manager = TraceManager()
+    collaboration_engine = CollaborationEngine()
+    artifact_manager = ArtifactManager()
+    tool_audit = ToolAuditStore()
     ollama = OllamaClient(base_url=config.OLLAMA_URL, model=config.MODEL, timeout=config.OLLAMA_TIMEOUT)
     agent_manager = AgentManager(
         agents_root=config.AGENTS_ROOT,
         memory_root=config.MEMORY_ROOT,
         skill_engine=skill_engine,
         llm_client=ollama,
+        trace_manager=trace_manager,
     )
     agent_router = AgentRouter(routes_path=config.ROUTE_CONFIG)
-    tool_executor = ToolExecutor(agent_manager=agent_manager, skill_engine=skill_engine)
+    tool_executor = ToolExecutor(
+        agent_manager=agent_manager,
+        skill_engine=skill_engine,
+        trace_manager=trace_manager,
+        artifact_manager=artifact_manager,
+        tool_audit=tool_audit,
+    )
     orchestrator = JarvisOrchestrator(
         agent_manager=agent_manager,
         agent_router=agent_router,
         skill_engine=skill_engine,
         tool_executor=tool_executor,
+        trace_manager=trace_manager,
     )
     return {
         "skill_engine": skill_engine,
@@ -49,6 +64,10 @@ def create_runtime() -> Dict[str, Any]:
         "agent_manager": agent_manager,
         "agent_router": agent_router,
         "tool_executor": tool_executor,
+        "trace_manager": trace_manager,
+        "collaboration_engine": collaboration_engine,
+        "artifact_manager": artifact_manager,
+        "tool_audit": tool_audit,
         "orchestrator": orchestrator,
     }
 
@@ -64,9 +83,45 @@ def create_app() -> FastAPI:
     )
     app.state.runtime = create_runtime()
 
+    @app.on_event("startup")
+    def startup_health_check() -> None:
+        trace_manager: TraceManager = app.state.runtime["trace_manager"]
+        health = trace_manager.health_check()
+        logger.info("TraceManager health: %s", health)
+        if not health.get("ok"):
+            logger.warning("TraceManager health check failed: %s", health)
+
     @app.get("/health")
     def health() -> Dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/executions/health")
+    def executions_health() -> Dict[str, Any]:
+        trace_manager: TraceManager = app.state.runtime["trace_manager"]
+        return trace_manager.health_check()
+
+    @app.get("/collaborations")
+    def collaborations(limit: int = Query(100, ge=1, le=500), agent: str = Query("", description="Filter by agent"), status: str = Query("", description="Filter by status")) -> Dict[str, Any]:
+        collaboration_engine: CollaborationEngine = app.state.runtime["collaboration_engine"]
+        return {
+            "db_path": str(collaboration_engine.db_path),
+            "collaborations": collaboration_engine.list_collaborations(limit=limit, agent=agent, status=status),
+        }
+
+    @app.get("/collaborations/recent")
+    def recent_collaborations(limit: int = Query(25, ge=1, le=100)) -> Dict[str, Any]:
+        collaboration_engine: CollaborationEngine = app.state.runtime["collaboration_engine"]
+        return {
+            "collaborations": collaboration_engine.list_recent(limit=limit),
+        }
+
+    @app.get("/collaborations/{collaboration_id}")
+    def collaboration_detail(collaboration_id: str) -> Dict[str, Any]:
+        collaboration_engine: CollaborationEngine = app.state.runtime["collaboration_engine"]
+        collaboration = collaboration_engine.get_collaboration(collaboration_id)
+        if collaboration is None:
+            raise HTTPException(status_code=404, detail="Collaboration not found")
+        return collaboration
 
     @app.get("/agents")
     def agents() -> List[Dict[str, Any]]:
@@ -162,6 +217,50 @@ def create_app() -> FastAPI:
         manager: AgentManager = app.state.runtime["agent_manager"]
         registry = manager.registry
         return registry.get_skill_snapshot()
+
+    @app.get("/executions")
+    def executions(limit: int = Query(100, ge=1, le=500), agent: str = Query("", description="Filter by agent"), status: str = Query("", description="Filter by status")) -> Dict[str, Any]:
+        trace_manager: TraceManager = app.state.runtime["trace_manager"]
+        traces = trace_manager.list_traces(limit=limit, agent_name=agent, status=status)
+        return {
+            "db_path": str(trace_manager.db_path),
+            "traces": [trace.to_dict() for trace in traces],
+        }
+
+    @app.get("/executions/recent")
+    def recent_executions(limit: int = Query(25, ge=1, le=100)) -> Dict[str, Any]:
+        trace_manager: TraceManager = app.state.runtime["trace_manager"]
+        traces = trace_manager.list_traces(limit=limit)
+        return {
+            "traces": [trace.to_dict() for trace in traces],
+        }
+
+    @app.get("/executions/{execution_id}")
+    def execution_detail(execution_id: str) -> Dict[str, Any]:
+        trace_manager: TraceManager = app.state.runtime["trace_manager"]
+        trace = trace_manager.get_trace(execution_id)
+        if trace is None:
+            raise HTTPException(status_code=404, detail="Execution trace not found")
+        return trace.to_dict()
+
+    @app.get("/artifacts")
+    def artifacts(limit: int = Query(100, ge=1, le=500)) -> Dict[str, Any]:
+        artifact_manager: ArtifactManager = app.state.runtime["artifact_manager"]
+        artifacts = artifact_manager.list_artifacts(limit=limit)
+        return {"artifacts": [artifact.to_dict() for artifact in artifacts]}
+
+    @app.get("/artifacts/{artifact_id}")
+    def artifact_detail(artifact_id: str) -> Dict[str, Any]:
+        artifact_manager: ArtifactManager = app.state.runtime["artifact_manager"]
+        artifact = artifact_manager.get_artifact(artifact_id)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="Artifact not found")
+        return artifact.to_dict()
+
+    @app.get("/tool-audit")
+    def tool_audit_logs(limit: int = Query(200, ge=1, le=500)) -> Dict[str, Any]:
+        tool_audit: ToolAuditStore = app.state.runtime["tool_audit"]
+        return {"logs": tool_audit.list_audit(limit=limit)}
 
     return app
 

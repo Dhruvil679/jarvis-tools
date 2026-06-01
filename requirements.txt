@@ -10,3 +10,4 @@ six
 fastapi
 uvicorn
 pydantic
+pytest

@@ -16,7 +16,7 @@ from api.app import app
 from config.config import config
 from core.agent_manager import AgentManager
 from core.agent_router import AgentRouter
-from core.memory_manager import MemoryManager
+from core.agent_memory import AgentMemoryStore
 from core.orchestrator import JarvisOrchestrator
 from core.skill_engine import SkillEngine
 from core.ollama_client import OllamaClient
@@ -72,9 +72,10 @@ def run() -> None:
     recent = friday_memory.get_recent_messages(5)
     assert_true(any(entry["content"] == "Integration memory check" for entry in recent), "Agent memory write failed")
 
-    shared_memory = MemoryManager()
-    shared_memory.add("user", "Shared memory check")
+    shared_memory = AgentMemoryStore(agent_name="jarvis")
+    shared_memory.add_message("user", "Shared memory check")
     assert_true(any(entry["content"] == "Shared memory check" for entry in shared_memory.get_recent_context(5)), "Shared memory write failed")
+    shared_memory.close()
 
     skills = skill_engine.list_skills()
     assert_true(len(skills) > 0, "Skill discovery returned no skills")

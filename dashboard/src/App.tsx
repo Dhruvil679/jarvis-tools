@@ -126,6 +126,72 @@ type TaskExecution = {
   payload: Record<string, unknown>;
 };
 
+type ExecutionTrace = {
+  execution_id: string;
+  task_id: string;
+  parent_task_id: string;
+  agent_name: string;
+  action_type: string;
+  status: string;
+  start_time: number;
+  end_time: number;
+  duration_ms: number;
+  result_summary: string;
+  error_message: string;
+};
+
+type ExecutionResponse = {
+  db_path?: string;
+  traces: ExecutionTrace[];
+};
+
+type ArtifactRecord = {
+  artifact_id: string;
+  type: string;
+  path: string;
+  created_by: string;
+  created_at: number;
+};
+
+type ToolAuditRecord = {
+  agent: string;
+  tool: string;
+  status: string;
+  timestamp: number;
+  result_summary: string;
+};
+
+type ArtifactResponse = {
+  artifacts: ArtifactRecord[];
+};
+
+type ToolAuditResponse = {
+  logs: ToolAuditRecord[];
+};
+
+type CollaborationRecord = {
+  collaboration_id: string;
+  task_id: string;
+  parent_agent: string;
+  child_agent: string;
+  status: string;
+  created_at: number;
+  message_count?: number;
+  progress_percent?: number;
+  messages?: Array<{
+    message_id: string;
+    collaboration_id: string;
+    sender_agent: string;
+    receiver_agent: string;
+    message: string;
+    timestamp: number;
+  }>;
+};
+
+type CollaborationResponse = {
+  collaborations: CollaborationRecord[];
+};
+
 type ChatResponse = {
   user_text: string;
   mode: string;
@@ -402,9 +468,17 @@ function App(): JSX.Element {
   ]);
   const [chatInput, setChatInput] = useState("");
   const [taskRuns, setTaskRuns] = useState<TaskRun[]>([]);
+  const [executionTraces, setExecutionTraces] = useState<ExecutionTrace[]>([]);
+  const [collaborations, setCollaborations] = useState<CollaborationRecord[]>([]);
+  const [artifacts, setArtifacts] = useState<ArtifactRecord[]>([]);
+  const [toolAuditLogs, setToolAuditLogs] = useState<ToolAuditRecord[]>([]);
   const [memorySnapshot, setMemorySnapshot] = useState<MemorySnapshot | null>(null);
   const [memoryTab, setMemoryTab] = useState<MemoryTab>("messages");
   const [skillQuery, setSkillQuery] = useState("");
+  const [executionQuery, setExecutionQuery] = useState("");
+  const [collaborationQuery, setCollaborationQuery] = useState("");
+  const [artifactQuery, setArtifactQuery] = useState("");
+  const [auditQuery, setAuditQuery] = useState("");
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
@@ -451,20 +525,56 @@ function App(): JSX.Element {
     return statusPayload.active_agent ?? "";
   }, []);
 
+  const refreshExecutions = useCallback(async () => {
+    const payload = await fetchJson<ExecutionResponse>("/executions/recent?limit=50");
+    setExecutionTraces(payload.traces ?? []);
+    setIsConnected(true);
+    setLastSyncAt(Date.now());
+  }, []);
+
+  const refreshCollaborations = useCallback(async () => {
+    const payload = await fetchJson<CollaborationResponse>("/collaborations/recent?limit=50");
+    setCollaborations(payload.collaborations ?? []);
+    setIsConnected(true);
+    setLastSyncAt(Date.now());
+  }, []);
+
+  const refreshArtifacts = useCallback(async () => {
+    const payload = await fetchJson<ArtifactResponse>("/artifacts?limit=100");
+    setArtifacts(payload.artifacts ?? []);
+    setIsConnected(true);
+    setLastSyncAt(Date.now());
+  }, []);
+
+  const refreshToolAudit = useCallback(async () => {
+    const payload = await fetchJson<ToolAuditResponse>("/tool-audit?limit=200");
+    setToolAuditLogs(payload.logs ?? []);
+    setIsConnected(true);
+    setLastSyncAt(Date.now());
+  }, []);
+
   const bootstrap = useCallback(async () => {
     setIsBootstrapping(true);
     setError(null);
     try {
-      const [agentPayload, statusPayload, skillPayload] = await Promise.all([
+      const [agentPayload, statusPayload, skillPayload, executionPayload, collaborationPayload, artifactPayload, auditPayload] = await Promise.all([
         fetchJson<AgentDefinition[]>("/agents"),
         fetchJson<{ agents: AgentStatus[]; active_agent: string | null }>("/agents/status"),
         fetchJson<{ skills: Record<string, SkillMetadata>; names: string[] }>("/skills"),
+        fetchJson<ExecutionResponse>("/executions/recent?limit=25"),
+        fetchJson<CollaborationResponse>("/collaborations/recent?limit=25"),
+        fetchJson<ArtifactResponse>("/artifacts?limit=25"),
+        fetchJson<ToolAuditResponse>("/tool-audit?limit=25"),
       ]);
 
       setAgents(agentPayload);
       setAgentStatuses(statusPayload.agents);
       setSkillMetadata(skillPayload.skills ?? {});
       setSkillNames(skillPayload.names ?? Object.keys(skillPayload.skills ?? {}));
+      setExecutionTraces(executionPayload.traces ?? []);
+      setCollaborations(collaborationPayload.collaborations ?? []);
+      setArtifacts(artifactPayload.artifacts ?? []);
+      setToolAuditLogs(auditPayload.logs ?? []);
 
       const availableAgentSlugs = agentPayload.map((agent) => agent.slug);
       const fallbackAgent = statusPayload.active_agent ?? availableAgentSlugs[0] ?? "jarvis";
@@ -490,7 +600,7 @@ function App(): JSX.Element {
     } finally {
       setIsBootstrapping(false);
     }
-  }, [refreshMemory]);
+  }, [refreshArtifacts, refreshCollaborations, refreshExecutions, refreshMemory, refreshToolAudit]);
 
   useEffect(() => {
     void bootstrap();
@@ -509,9 +619,13 @@ function App(): JSX.Element {
     const timer = window.setInterval(() => {
       void refreshStatus();
       void refreshMemory(selectedAgent || "jarvis");
+      void refreshExecutions();
+      void refreshCollaborations();
+      void refreshArtifacts();
+      void refreshToolAudit();
     }, 10000);
     return () => window.clearInterval(timer);
-  }, [isBootstrapping, refreshStatus, refreshMemory, selectedAgent]);
+  }, [isBootstrapping, refreshStatus, refreshMemory, refreshExecutions, refreshCollaborations, refreshArtifacts, refreshToolAudit, selectedAgent]);
 
   useEffect(() => {
     chatScrollRef.current?.scrollTo({ top: chatScrollRef.current.scrollHeight, behavior: "smooth" });
@@ -584,8 +698,8 @@ function App(): JSX.Element {
 
     setChatMessages((current) => [...current, userMessage]);
     setChatInput("");
-    setIsSending(true);
-    setError(null);
+      setIsSending(true);
+      setError(null);
 
     try {
       const response = await fetchJson<ChatResponse>("/chat", {
@@ -639,6 +753,10 @@ function App(): JSX.Element {
       setAgentStatuses(Object.values(response.statuses ?? {}));
       setIsConnected(true);
       setLastSyncAt(Date.now());
+      await refreshExecutions();
+      await refreshCollaborations();
+      await refreshArtifacts();
+      await refreshToolAudit();
 
       const primaryAgent = response.route.primary_agent || selectedAgent;
       if (autonomousMode && primaryAgent) {
@@ -661,7 +779,7 @@ function App(): JSX.Element {
     } finally {
       setIsSending(false);
     }
-  }, [autonomousMode, chatInput, isSending, refreshMemory, selectedAgent]);
+  }, [autonomousMode, chatInput, isSending, refreshArtifacts, refreshCollaborations, refreshExecutions, refreshMemory, refreshToolAudit, selectedAgent]);
 
   const memoryEntries = useMemo(() => {
     if (!selectedMemory) {
@@ -713,6 +831,40 @@ function App(): JSX.Element {
     return Object.entries(selectedSkillMetadata).filter(([key]) => key !== "name");
   }, [selectedSkillMetadata]);
   const latestTaskExecutions = latestRun?.taskExecutions ?? [];
+  const filteredExecutionTraces = useMemo(() => {
+    const query = executionQuery.trim().toLowerCase();
+    if (!query) {
+      return executionTraces;
+    }
+    return executionTraces.filter((trace) => {
+      const haystack = `${trace.execution_id} ${trace.task_id} ${trace.parent_task_id} ${trace.agent_name} ${trace.action_type} ${trace.status} ${trace.result_summary} ${trace.error_message}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [executionQuery, executionTraces]);
+  const filteredCollaborations = useMemo(() => {
+    const query = collaborationQuery.trim().toLowerCase();
+    if (!query) {
+      return collaborations;
+    }
+    return collaborations.filter((collaboration) => {
+      const haystack = `${collaboration.collaboration_id} ${collaboration.task_id} ${collaboration.parent_agent} ${collaboration.child_agent} ${collaboration.status}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [collaborationQuery, collaborations]);
+  const filteredArtifacts = useMemo(() => {
+    const query = artifactQuery.trim().toLowerCase();
+    if (!query) {
+      return artifacts;
+    }
+    return artifacts.filter((artifact) => `${artifact.artifact_id} ${artifact.type} ${artifact.path} ${artifact.created_by}`.toLowerCase().includes(query));
+  }, [artifactQuery, artifacts]);
+  const filteredAuditLogs = useMemo(() => {
+    const query = auditQuery.trim().toLowerCase();
+    if (!query) {
+      return toolAuditLogs;
+    }
+    return toolAuditLogs.filter((entry) => `${entry.agent} ${entry.tool} ${entry.status} ${entry.result_summary}`.toLowerCase().includes(query));
+  }, [auditQuery, toolAuditLogs]);
 
   const renderMemoryTabs = (): JSX.Element => (
     <div className="mt-4 flex flex-wrap gap-2">
@@ -1206,6 +1358,222 @@ function App(): JSX.Element {
                 ) : (
                   <div className="rounded-2xl border border-dashed border-slate-300 p-5 text-sm text-slate-500 dark:border-white/10 dark:text-slate-400">
                     Send a task to populate the collaboration timeline.
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section className={`${PANEL} p-4 sm:p-5`}>
+              <SectionHeading
+                eyebrow="Execution Monitor"
+                title="Live traces"
+                description="Search orchestration and tool traces as they are written to the execution history database."
+                action={<Pill className="border-slate-200 bg-slate-100 text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-200">{executionTraces.length} traces</Pill>}
+              />
+
+              <input
+                value={executionQuery}
+                onChange={(event) => setExecutionQuery(event.target.value)}
+                placeholder="Search by agent, status, task, or error..."
+                className="mt-4 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500/40 dark:border-white/10 dark:bg-slate-950 dark:text-slate-100"
+              />
+
+              <div className="mt-4 max-h-[620px] space-y-3 overflow-y-auto pr-1">
+                {filteredExecutionTraces.length ? (
+                  filteredExecutionTraces.map((trace) => (
+                    <div key={trace.execution_id} className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-slate-950">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">
+                            {trace.action_type || "execution"}
+                          </p>
+                          <h3 className="mt-2 text-sm font-semibold text-slate-950 dark:text-white">
+                            {trace.agent_name || "system"} · {trace.execution_id.slice(0, 12)}
+                          </h3>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Pill className={stateBadgeClass(trace.status)}>{trace.status}</Pill>
+                          <Pill className="border-slate-200 bg-slate-100 text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-200">
+                            {Math.round(trace.duration_ms)} ms
+                          </Pill>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5">
+                          <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Task</p>
+                          <p className="mt-2 break-all text-sm text-slate-700 dark:text-slate-200">{trace.task_id || "—"}</p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5">
+                          <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Parent</p>
+                          <p className="mt-2 break-all text-sm text-slate-700 dark:text-slate-200">{trace.parent_task_id || "—"}</p>
+                        </div>
+                      </div>
+
+                      <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
+                        {truncate(trace.result_summary || "No result summary recorded yet.", 220)}
+                      </p>
+                      {trace.error_message ? (
+                        <div className="mt-3 rounded-xl border border-rose-500/20 bg-rose-500/10 p-3 text-sm text-rose-700 dark:text-rose-200">
+                          {trace.error_message}
+                        </div>
+                      ) : null}
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <Pill className="border-slate-200 bg-slate-100 text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-200">
+                          started {formatTimestamp(trace.start_time)}
+                        </Pill>
+                        <Pill className="border-slate-200 bg-slate-100 text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-200">
+                          ended {trace.end_time ? formatTimestamp(trace.end_time) : "running"}
+                        </Pill>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-white/10 dark:text-slate-400">
+                    No execution traces match the current search.
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section className={`${PANEL} p-4 sm:p-5`}>
+              <SectionHeading
+                eyebrow="Collaboration Monitor"
+                title="Active collaborations"
+                description="Track agent-to-agent delegation, participating agents, status, and execution progress."
+                action={<Pill className="border-slate-200 bg-slate-100 text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-200">{filteredCollaborations.length} collaborations</Pill>}
+              />
+
+              <input
+                value={collaborationQuery}
+                onChange={(event) => setCollaborationQuery(event.target.value)}
+                placeholder="Search collaborations..."
+                className="mt-4 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500/40 dark:border-white/10 dark:bg-slate-950 dark:text-slate-100"
+              />
+
+              <div className="mt-4 max-h-[460px] space-y-3 overflow-y-auto pr-1">
+                {filteredCollaborations.length ? (
+                  filteredCollaborations.map((collaboration) => (
+                    <div key={collaboration.collaboration_id} className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-slate-950">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">
+                            {collaboration.task_id}
+                          </p>
+                          <h3 className="mt-2 text-sm font-semibold text-slate-950 dark:text-white">
+                            {collaboration.parent_agent} → {collaboration.child_agent}
+                          </h3>
+                        </div>
+                        <Pill className={stateBadgeClass(collaboration.status)}>{collaboration.status}</Pill>
+                      </div>
+                      <div className="mt-3 rounded-full bg-slate-100 p-1 dark:bg-white/5">
+                        <div
+                          className="h-2 rounded-full bg-cyan-500 transition-all"
+                          style={{ width: `${Math.min(100, collaboration.progress_percent ?? 0)}%` }}
+                        />
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <Pill className="border-slate-200 bg-slate-100 text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-200">
+                          {collaboration.message_count ?? 0} messages
+                        </Pill>
+                        <Pill className="border-slate-200 bg-slate-100 text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-200">
+                          {Math.round(collaboration.progress_percent ?? 0)}% progress
+                        </Pill>
+                        <Pill className="border-slate-200 bg-slate-100 text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-200">
+                          {formatTimestamp(collaboration.created_at)}
+                        </Pill>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-white/10 dark:text-slate-400">
+                    No collaborations match the current search.
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section className={`${PANEL} p-4 sm:p-5`}>
+              <SectionHeading
+                eyebrow="Artifact Explorer"
+                title="Generated files"
+                description="Track workspace artifacts created under the sandboxed generated directory."
+                action={<Pill className="border-slate-200 bg-slate-100 text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-200">{filteredArtifacts.length} artifacts</Pill>}
+              />
+
+              <input
+                value={artifactQuery}
+                onChange={(event) => setArtifactQuery(event.target.value)}
+                placeholder="Search artifacts..."
+                className="mt-4 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500/40 dark:border-white/10 dark:bg-slate-950 dark:text-slate-100"
+              />
+
+              <div className="mt-4 max-h-[420px] space-y-3 overflow-y-auto pr-1">
+                {filteredArtifacts.length ? (
+                  filteredArtifacts.map((artifact) => (
+                    <div key={artifact.artifact_id} className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-slate-950">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">{artifact.type}</p>
+                          <h3 className="mt-2 break-all text-sm font-semibold text-slate-950 dark:text-white">{artifact.path}</h3>
+                        </div>
+                        <Pill className="border-slate-200 bg-slate-100 text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-200">
+                          {artifact.created_by}
+                        </Pill>
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <Pill className="border-slate-200 bg-slate-100 text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-200">
+                          {artifact.artifact_id.slice(0, 12)}
+                        </Pill>
+                        <Pill className="border-slate-200 bg-slate-100 text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-200">
+                          {formatTimestamp(artifact.created_at)}
+                        </Pill>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-white/10 dark:text-slate-400">
+                    No artifacts match the current search.
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section className={`${PANEL} p-4 sm:p-5`}>
+              <SectionHeading
+                eyebrow="Tool Audit Monitor"
+                title="Tool audit log"
+                description="Review tool usage, result summaries, and failures from the sandbox audit store."
+                action={<Pill className="border-slate-200 bg-slate-100 text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-200">{filteredAuditLogs.length} logs</Pill>}
+              />
+
+              <input
+                value={auditQuery}
+                onChange={(event) => setAuditQuery(event.target.value)}
+                placeholder="Search audit logs..."
+                className="mt-4 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500/40 dark:border-white/10 dark:bg-slate-950 dark:text-slate-100"
+              />
+
+              <div className="mt-4 max-h-[420px] space-y-3 overflow-y-auto pr-1">
+                {filteredAuditLogs.length ? (
+                  filteredAuditLogs.map((entry, index) => (
+                    <div key={`${entry.agent}-${entry.tool}-${entry.timestamp}-${index}`} className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-slate-950">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">{entry.agent}</p>
+                          <h3 className="mt-2 text-sm font-semibold text-slate-950 dark:text-white">{entry.tool}</h3>
+                        </div>
+                        <Pill className={stateBadgeClass(entry.status)}>{entry.status}</Pill>
+                      </div>
+                      <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">{truncate(entry.result_summary || "No summary recorded.", 220)}</p>
+                      <Pill className="mt-3 border-slate-200 bg-slate-100 text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-200">
+                        {formatTimestamp(entry.timestamp)}
+                      </Pill>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-white/10 dark:text-slate-400">
+                    No audit entries match the current search.
                   </div>
                 )}
               </div>

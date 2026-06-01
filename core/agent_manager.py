@@ -11,6 +11,7 @@ from config.config import config as runtime_config
 from .agent_memory import AgentMemoryStore
 from .agent_skill_registry import AgentSkillRegistry
 from .agent_models import AgentAction, AgentDefinition, AgentResult, AgentStatusSnapshot, AgentTask, slugify
+from .trace_manager import TraceManager
 from .logger import get_logger
 
 
@@ -24,12 +25,14 @@ class AgentManager:
         memory_root: Optional[str] = None,
         skill_engine: Optional[Any] = None,
         llm_client: Optional[Any] = None,
+        trace_manager: Optional[TraceManager] = None,
     ) -> None:
         self.repo_root = Path(__file__).resolve().parent.parent
         self.agents_root = Path(agents_root) if agents_root else self.repo_root / "agents"
         self.memory_root = Path(memory_root) if memory_root else self.repo_root / "memory"
         self.skill_engine = skill_engine
         self.llm_client = llm_client
+        self.trace_manager = trace_manager
         self.registry = AgentSkillRegistry(db_path=getattr(runtime_config, "AGENT_SKILL_REGISTRY", None))
         self._agents: Dict[str, AgentDefinition] = {}
         self._memories: Dict[str, AgentMemoryStore] = {}
@@ -254,6 +257,7 @@ class AgentManager:
         iteration: int = 0,
         max_tokens: int = 700,
         timeout_seconds: Optional[float] = None,
+        execution_trace_id: Optional[str] = None,
     ) -> AgentResult:
         agent = self.get_agent(agent_name)
         if not agent:
@@ -264,6 +268,17 @@ class AgentManager:
         resolved_skill_context = skill_context if skill_context is not None else self.build_agent_skill_context(agent.slug, task_text)
         effective_timeout = float(timeout_seconds if timeout_seconds is not None else agent.timeout_seconds or runtime_config.AGENT_TIMEOUT_SECONDS)
         start = time.time()
+        trace = None
+        if self.trace_manager is not None:
+            trace = self.trace_manager.get_trace(execution_trace_id) if execution_trace_id else self.trace_manager.create_trace(
+                task_id=task_text,
+                parent_task_id=handoff_from or "",
+                agent_name=agent.slug,
+                action_type="agent_execution",
+                status="running",
+                result_summary=task_text,
+            )
+            execution_trace_id = trace.execution_id if trace else execution_trace_id
 
         memory.set_status(
             "running",
@@ -404,6 +419,8 @@ class AgentManager:
                 len(resolved_skill_names),
                 memory.db_path,
             )
+            if self.trace_manager is not None and execution_trace_id:
+                self.trace_manager.complete_trace(execution_trace_id, result_summary=result_text)
 
             return AgentResult(
                 agent=agent.slug,
@@ -471,6 +488,8 @@ class AgentManager:
                 effective_timeout,
                 memory.db_path,
             )
+            if self.trace_manager is not None and execution_trace_id:
+                self.trace_manager.fail_trace(execution_trace_id, error_text)
             return AgentResult(
                 agent=agent.slug,
                 task=task_text,
@@ -522,6 +541,8 @@ class AgentManager:
                 effective_timeout,
                 memory.db_path,
             )
+            if self.trace_manager is not None and execution_trace_id:
+                self.trace_manager.fail_trace(execution_trace_id, str(exc))
             failed_output = {
                 "agent": agent.display_name,
                 "task": task_text,

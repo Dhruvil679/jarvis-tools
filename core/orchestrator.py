@@ -10,6 +10,8 @@ from .agent_manager import AgentManager
 from .agent_memory import AgentMemoryStore
 from .agent_models import AgentResult, AgentStatusSnapshot, AgentTask, CollaborationEvent, OrchestrationResult, RouteDecision, ToolExecutionRecord
 from .agent_router import AgentRouter
+from .collaboration_engine import CollaborationEngine
+from .trace_manager import TraceManager
 from .logger import get_logger
 from .tool_executor import ToolExecutor
 
@@ -25,12 +27,16 @@ class JarvisOrchestrator:
         skill_engine: Optional[Any] = None,
         shared_memory: Optional[AgentMemoryStore] = None,
         tool_executor: Optional[ToolExecutor] = None,
+        trace_manager: Optional[TraceManager] = None,
+        collaboration_engine: Optional[CollaborationEngine] = None,
     ) -> None:
         self.agent_manager = agent_manager
         self.agent_router = agent_router
         self.skill_engine = skill_engine
         self.shared_memory = shared_memory or AgentMemoryStore(agent_name="jarvis")
         self.tool_executor = tool_executor or ToolExecutor(agent_manager=agent_manager, skill_engine=skill_engine)
+        self.trace_manager = trace_manager or TraceManager()
+        self.collaboration_engine = collaboration_engine or CollaborationEngine()
 
     async def process(self, user_text: str, mode: str = "auto", preferred_agent: Optional[str] = None) -> OrchestrationResult:
         started_at = time.time()
@@ -47,6 +53,14 @@ class JarvisOrchestrator:
         route = self.agent_router.route(user_text, preferred_agent=preferred_agent, mode=mode)
         timeline: List[CollaborationEvent] = []
         execution_logs: List[str] = []
+        orchestration_trace = self.trace_manager.create_trace(
+            task_id=user_text,
+            parent_task_id="",
+            agent_name="orchestrator",
+            action_type="orchestration",
+            status="running",
+            result_summary="Orchestration started",
+        )
         timeline.append(
             CollaborationEvent(
                 ts=time.time(),
@@ -78,8 +92,14 @@ class JarvisOrchestrator:
             except Exception as exc:
                 logger.warning("Skill resolution failed: %s", exc)
 
-        tasks = self.agent_router.decompose(user_text, route)
-        if route.mode == "multi":
+        collaboration_task_id = uuid.uuid4().hex
+        collaboration_plan: Dict[str, Any] = {"tasks": [], "collaborations": [], "chain": []}
+        if self.collaboration_engine is not None and route.mode == "multi":
+            collaboration_plan = self.collaboration_engine.build_collaboration_plan(collaboration_task_id, user_text, route)
+            tasks = list(collaboration_plan.get("tasks", [])) or self.agent_router.decompose(user_text, route)
+        else:
+            tasks = self.agent_router.decompose(user_text, route)
+        if route.mode == "multi" and not collaboration_plan.get("tasks"):
             friday_tasks = [task for task in tasks if task.agent == "friday"]
             other_tasks = [task for task in tasks if task.agent != "friday"]
             if friday_tasks:
@@ -89,10 +109,22 @@ class JarvisOrchestrator:
             task.depends_on = [tasks[task_index - 1].agent] if task_index > 0 else []
         execution_logs.append(f"Launching isolated fan-out: agents={len(tasks)}")
         dependency_events: Dict[str, asyncio.Event] = {task.agent: asyncio.Event() for task in tasks}
+        incoming_messages_by_agent: Dict[str, List[Dict[str, Any]]] = {task.agent: [] for task in tasks}
+        collaboration_links: List[Dict[str, Any]] = list(collaboration_plan.get("collaborations", []))
 
         task_results = await asyncio.gather(
             *[
-                self._execute_agent_task(task, user_text, route, index, len(tasks), dependency_events)
+                self._execute_agent_task(
+                    task,
+                    user_text,
+                    route,
+                    index,
+                    len(tasks),
+                    tasks,
+                    dependency_events,
+                    incoming_messages_by_agent,
+                    collaboration_links,
+                )
                 for index, task in enumerate(tasks)
             ],
             return_exceptions=True,
@@ -193,6 +225,7 @@ class JarvisOrchestrator:
             elapsed_seconds,
             overall_state,
         )
+        self.trace_manager.complete_trace(orchestration_trace.execution_id, result_summary=final_response or merged_output.get("result", ""))
 
         return OrchestrationResult(
             user_text=user_text,
@@ -215,10 +248,21 @@ class JarvisOrchestrator:
         route: RouteDecision,
         index: int,
         total: int,
+        tasks: List[AgentTask],
         dependency_events: Dict[str, asyncio.Event],
+        incoming_messages_by_agent: Dict[str, List[Dict[str, Any]]],
+        collaboration_links: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
         started_at = time.time()
         task_id = task.task_id or uuid.uuid4().hex
+        agent_trace = self.trace_manager.create_trace(
+            task_id=task_id,
+            parent_task_id=task.task_id or user_text,
+            agent_name=task.agent,
+            action_type="agent_execution",
+            status="running",
+            result_summary=task.objective,
+        )
         timeline: List[CollaborationEvent] = [
             CollaborationEvent(
                 ts=started_at,
@@ -257,6 +301,8 @@ class JarvisOrchestrator:
                 metadata={"step": task.step, "depends_on": task.depends_on, "total": total, "index": index},
             )
 
+        incoming_messages = incoming_messages_by_agent.get(task.agent, [])
+
         try:
             if task.depends_on:
                 await asyncio.gather(
@@ -272,11 +318,12 @@ class JarvisOrchestrator:
                     task.agent,
                     task.objective,
                     collaboration_context=None,
-                    incoming_messages=None,
+                    incoming_messages=incoming_messages if incoming_messages else None,
                     handoff_from="user",
                     execution_context=execution_context,
                     iteration=iteration,
                     timeout_seconds=timeout_seconds,
+                    execution_trace_id=agent_trace.execution_id,
                 )
                 last_result = result
                 timeline.append(
@@ -388,6 +435,19 @@ class JarvisOrchestrator:
             execution_logs.append(
                 f"Agent finished: {task.agent} status={final_result.status} elapsed={final_result.elapsed_seconds:.2f}s confidence={final_result.confidence:.2f}"
             )
+            self._finalize_collaboration(
+                collaboration_links,
+                index,
+                final_result,
+                tasks,
+                incoming_messages_by_agent,
+                user_text,
+                failed=False,
+            )
+            if final_result.status == "failed":
+                self.trace_manager.fail_trace(agent_trace.execution_id, final_result.result)
+            else:
+                self.trace_manager.complete_trace(agent_trace.execution_id, result_summary=final_result.result)
             dependency_events[task.agent].set()
             return {
                 "task": task,
@@ -435,6 +495,16 @@ class JarvisOrchestrator:
                 )
             )
             execution_logs.append(f"Agent failed: {task.agent} error={exc}")
+            self._finalize_collaboration(
+                collaboration_links,
+                index,
+                failed_result,
+                tasks,
+                incoming_messages_by_agent,
+                user_text,
+                failed=True,
+            )
+            self.trace_manager.fail_trace(agent_trace.execution_id, str(exc))
             dependency_events[task.agent].set()
             return {
                 "task": task,
@@ -443,6 +513,56 @@ class JarvisOrchestrator:
                 "execution_logs": execution_logs,
                 "execution_records": execution_records,
             }
+
+    def _finalize_collaboration(
+        self,
+        collaboration_links: List[Dict[str, Any]],
+        index: int,
+        result: AgentResult,
+        tasks: List[AgentTask],
+        incoming_messages_by_agent: Dict[str, List[Dict[str, Any]]],
+        user_text: str,
+        failed: bool = False,
+    ) -> None:
+        if not collaboration_links or index >= len(collaboration_links):
+            return
+
+        current_link = collaboration_links[index]
+        current_collaboration_id = str(current_link.get("collaboration_id", ""))
+        if current_collaboration_id:
+            if failed:
+                self.collaboration_engine.fail_collaboration(current_collaboration_id)
+            else:
+                self.collaboration_engine.complete_collaboration(current_collaboration_id)
+
+        next_index = index + 1
+        if next_index >= len(tasks) or next_index >= len(collaboration_links):
+            return
+
+        next_task = tasks[next_index]
+        next_link = collaboration_links[next_index]
+        next_collaboration_id = str(next_link.get("collaboration_id", ""))
+        if not next_collaboration_id:
+            return
+
+        handoff_message = self._build_handoff_message(result, next_task.agent, user_text)
+        self.collaboration_engine.record_message(
+            next_collaboration_id,
+            sender_agent=result.agent,
+            receiver_agent=next_task.agent,
+            message=handoff_message,
+        )
+        incoming_messages_by_agent.setdefault(next_task.agent, []).append(
+            {
+                "from": result.agent,
+                "to": next_task.agent,
+                "task": next_task.objective,
+                "message": handoff_message,
+                "collaboration_id": next_collaboration_id,
+                "confidence": result.confidence,
+                "payload": {"result": result.result, "status": result.status},
+            }
+        )
 
     async def _merge_outputs(
         self,
